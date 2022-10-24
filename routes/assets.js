@@ -58,7 +58,7 @@ router.post("/create", upload.single('file'), async (req, res) => {
     const raffle = req.body.raffle
     const name = req.body.name
     const price = req.body.price
-    const amount = req.body.amount
+    const originAmount = req.body.originAmount
     const image = req.body.image
 
 
@@ -68,8 +68,8 @@ router.post("/create", upload.single('file'), async (req, res) => {
             name: name,
             createTime: new Date().getTime(),
             price: price,
-            amount: amount,
-            soldamount: 0,
+            originAmount: originAmount,
+            soldAmount: 0,
             image: image,
             available: true
         })
@@ -115,10 +115,10 @@ router.post("/assetSold", upload.single('file'), async (req, res) => {
 
     const id = req.body.id
     const assets = await Asset.find({_id: id})
-    let _amount = assets[0].amount - 1
-    let _soldamount = assets[0].soldamount + 1
+    let _amount = assets[0].originAmount - 1
+    let _soldamount = assets[0].soldAmount + 1
     if(assets.length > 0) {
-        await Asset.updateMany({_id: id}, {$set: {amount: _amount, soldamount: _soldamount}})
+        await Asset.updateMany({_id: id}, {$set: {originAmount: _amount, soldAmount: _soldamount}})
         res.status(200).send({assets});
     } else {        
         res.status(400).send({
