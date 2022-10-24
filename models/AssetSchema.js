@@ -23,11 +23,11 @@ const AssetSchema = mongoose.Schema({
         type: Number,
         required: true
     },
-    originAmount: {
+    amount: {
         type: Number,
         required: true
     },
-    soldAmount: {
+    soldamount: {
         type: Number,
         required: true
     },
