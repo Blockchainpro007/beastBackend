@@ -5,6 +5,8 @@ import 'dotenv/config'
 import cors from 'cors'
 
 import authRoutes from "./routes/users.js"
+import assetsRoutes from "./routes/assets.js"
+import ordersRoutes from "./routes/orders.js"
 
 import decryptoin from "./middleware/decryption.js"
 import morgan from "morgan"
@@ -12,9 +14,18 @@ import path from "path"
 import fs from "fs"
 import bodyParser from "body-parser"
 import cookieParser from 'cookie-parser'
+import multer from "multer"
+import http from "http"
+import url from "url"
 
 
 const app = express()
+
+ 
+// Creating server to accept request
+app.use(express.static('public')); 
+app.use('/images', express.static('images'));
+// const multer = require('multer')
 app.use(express.json())
 
 var accessLogStream = fs.createWriteStream(path.join('logos/', 'access.log'), { flags: 'a' })
@@ -31,6 +42,8 @@ app.use(bodyParser.json())
 app.use(cookieParser());
 
 app.use("/auth", authRoutes)
+app.use("/asset", assetsRoutes)
+app.use("/order", ordersRoutes)
 
 // Connection With Database
 mongoose.connect(process.env.MONGO_URI).then((res)=>{

@@ -7,10 +7,18 @@ const UserSchema = mongoose.Schema({
         type: String,
         required: true
     },
-    scoreHistory: {
+    nfts: {
         type: Array,
         required: true,
         default: []
+    },
+    allScore: {
+        type: Number,
+        required: true,
+    },
+    scoreHistory: {
+        type: Number,
+        required: true,
     },
     createTime: {
         type: Number,

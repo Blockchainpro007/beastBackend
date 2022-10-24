@@ -2,8 +2,28 @@ import express from 'express';
 import User from "../models/UserSchema.js"
 import auth from "../middleware/auth.js"
 import winston from "winston"
+import pkg from "@apollo/client"
+import fetch from 'cross-fetch';
+
 
 const router = express.Router()
+const { ApolloClient, gql, InMemoryCache, HttpLink } = pkg;
+const SUBGRAPH_URL = 'https://api.studio.thegraph.com/query/34591/epicbeast_mainnet/0.0.1'
+
+const getMetadatas = async (ids) => {
+    const ipfsUrl = "https://api.epicbeast.io/metadata/epicbeast/"
+    let results = [];
+    for (let i = 0; i < ids.length; i ++) {
+      await fetch(`${ipfsUrl}${ids[i]}.json`)
+      .then((res) => res.json())
+      .then((json) => {
+        results.push(json)
+      })
+    }  
+    
+    return results
+  }
+
 
 const logger = winston.createLogger({
     level: 'info',
@@ -30,22 +50,99 @@ if(process.env.NODE_ENV != 'production') {
         format: winston.format.simple(),
     }));
 }
+var totalScore = 0;
 
 router.post("/login", async (req, res) => {
     if (!req.body) return res.status(400).send({
         message: "body is required"
     })
 
-    const public_key = req.body.public_key.toLowerCase()
 
+const usersQuery = `
+    query($user: Bytes!) {
+        epicNFTHolders(where: {owner: $user}) {
+          tokenId
+          owner
+          approved
+        }
+      }
+`
+const client = new ApolloClient({
+    link: new HttpLink({ uri: SUBGRAPH_URL, fetch }),
+    cache: new InMemoryCache(),
+  });
+
+
+
+
+const public_key = req.body.public_key.toLowerCase()
+const data = await client.query({query: gql(usersQuery),variables:{user:public_key}})
+      console.log("sniper: owners: ", data)
+
+      const _owners = data.data.epicNFTHolders.map((item, ind) => {
+        return {
+          id: item.tokenId
+          //   owner: item.owner
+        }
+    })
+    
+    var arrayOfNFTs = _owners.map(function(obj) {
+        return obj.id;
+    });
+    if (arrayOfNFTs.length < 15){
+        totalScore = 0.2
+    } else if (15 < arrayOfNFTs.length < 51){
+        totalScore = 1.65
+    } else {
+        totalScore = 9
+    }
+
+    console.log("sniper: owners1: ", _owners)
+    const metadata = await getMetadatas(arrayOfNFTs)
+    console.log("sniper: metadata: ", metadata)
+    var arrayOfmetadata = metadata.map(function(obj) {
+        return obj.attributes;
+    });
+    let originalBeast;
+    let isOriginalBeast;
+    let isEpicBeast;
+    let skinOfNFT;
+    let isAzure;
+    let isCherry;
+    for(var i = 0; i < arrayOfmetadata.length; i++) {
+        for(var j = 0; j < arrayOfmetadata[i].length; j++) {
+            if (arrayOfmetadata[i][j].trait_type == "Original Beast"){
+                originalBeast = arrayOfmetadata[i][j].value
+                if(originalBeast == "yes"){
+                    isOriginalBeast = true
+                } else if(originalBeast == "no"){
+                    isEpicBeast = true
+                }
+                console.log("sniper: metadata1: ", originalBeast)
+            }
+            if (arrayOfmetadata[i][j].trait_type == "Skin"){
+                skinOfNFT = arrayOfmetadata[i][j].value
+                if(skinOfNFT == "Azure"){
+                    isAzure = true
+                }else if(skinOfNFT == "Cherry"){
+                    isCherry = true
+                }
+                console.log("sniper: metadata1: ", skinOfNFT)
+            }
+
+        }
+    }
     const users = await User.find({
         public_key: public_key
     });
-
+    
+    
     if (users.length === 0) {
         const user = new User({
+            nfts: arrayOfNFTs,
             public_key: public_key,
-            scoreHistory: [],
+            allScore: 0,
+            scoreHistory: 0,
             createTime: new Date().getTime(),
             login: true
         })
@@ -55,14 +152,47 @@ router.post("/login", async (req, res) => {
             logger.log({level: 'info', message: `[success][user][create][${public_key}]`})
             res.send(saveduser)
         } catch (err) {
-           res.status(400).send({
+            res.status(400).send({
                 message: err.message
             })
             logger.log({level: 'error', message: `[fail][user][create][${public_key}]`})
         }
     } else {
-        await User.updateOne({public_key: public_key}, {$set: {login: true}})
+        console.log("userdata: ", users[0].allScore)
+        if(isOriginalBeast == true){
+            totalScore += 0.075
+            if(isEpicBeast == true){
+                totalScore += 0.025
+            }
+            if(isAzure == true){
+                totalScore += 0.05
+            } else if(isCherry == true){
+                totalScore += 0.05
+            } 
+        } else {
+            totalScore = 0
+        }
+        
+        let currentTime = new Date().getTime()
+        let rate = (currentTime - users[0].createTime)/86400000
+        let scoreValue = users[0].scoreHistory + totalScore*rate
+        await User.updateMany({public_key: public_key}, {$set: {scoreHistory: scoreValue, createTime: currentTime, login: true}})
         res.send(users[0])
+    }
+})
+
+router.post('/claim' ,async(req,res) => {
+    const public_key = req.body.public_key.toLowerCase()
+
+    const users = await User.find({public_key: public_key})
+    if(users.length > 0) {
+        console.log("claim: ", users[0].allScore)
+        console.log("claim: ", users[0].scoreHistory)
+        let score = users[0].allScore
+        let addScore = users[0].scoreHistory
+        score += addScore
+        await User.updateMany({public_key: public_key}, {$set: {allScore:score,  scoreHistory: 0}})
+        res.status(200).send({logout: 'success'});
     }
 })
 
@@ -75,7 +205,7 @@ router.post('/logout' ,async(req,res) => {
 
     const users = await User.find({public_key: public_key})
     if(users.length > 0) {
-        await User.updateOne({public_key: public_key}, {$set: {login: false}})
+        await User.updateMany({public_key: public_key}, {$set: {login: false, scoreHistory: totalScore}})
         res.status(200).send({logout: 'success'});
     } else {        
         res.status(400).send({
@@ -104,13 +234,19 @@ router.post('/scoredata', async(req,res) => {
         message: "body is required"
     })
 
+    console.log("sniper: public_key: ", req.body.public_key)
     const public_key = req.body.public_key.toLowerCase()
-    console.log("sniper: public_key: ", public_key)
 
     const users = await User.find({public_key: public_key, login: true})
     if(users.length > 0) {
+        let currentTime = new Date().getTime()
+
+        let rate = (currentTime - users[0].createTime)/86400000
+        let scoreValue = users[0].scoreHistory + totalScore*rate
+        await User.updateMany({public_key: public_key}, {$set: {scoreHistory: scoreValue, createTime: currentTime, login: true}})
         res.status(200).send({
             createTime: users[0].createTime,
+            allScore: users[0].allScore,
             scoreHistory: users[0].scoreHistory
         });
     } else {            
@@ -120,116 +256,25 @@ router.post('/scoredata', async(req,res) => {
     }
 }); 
 
-// router.post("/signup", async (req, res) => {
-//     if (!req.body) return res.status(400).send({
-//         message: "body is required"
-//     })
+router.post('/nfts', async(req,res) => {
+    if (!req.body) return res.status(400).send({
+        message: "body is required"
+    })
 
-//     const getPublicKey = await User.find({
-//         public_key: req.body.public_key
-//     });
+    console.log("sniper: public_key: ", req.body.public_key)
+    const public_key = req.body.public_key.toLowerCase()
 
-//     if (getPublicKey.length === 0) {
-//         const user = new User({
-//             public_key: req.body.public_key,
-//             sponsor_key: '',
-//         })
-//         try {
-//             const saveduser = await user.save()
-//             logger.log({level: 'info', message: `[success][user][loginwithoutsponsor][${req.body.public_key}]`})
-//             res.send(saveduser)
-//         } catch (err) {
-//            res.status(400).send({
-//                 message: err.message
-//             })
-//             logger.log({level: 'error', message: `[fail][user][loginwithoutsponsor][${req.body.public_key}]`})
-//         }
-//     } else {
-//         res.status(400).send({
-//             message: "This public key already in the database."
-//         })
-//     }
-// })
+    const users = await User.find({public_key: public_key, login: true})
+    if(users.length > 0) {
+        res.status(200).send({
+            nfts: users[0].nfts,
+        });
+    } else {            
+        res.status(400).send({
+            message: "User With Public Key Not Found"
+        })
+    }
+}); 
 
-// -------------------------login user-----------------------
-// router.post("/login", async (req, res) => {
-//     if (!req.body) return res.status(400).send({
-//         message: "body is required"
-//     })
-//     try {
-//         let token=req.body.token;
-//         User.findByToken(token,async(err,user)=>{
-//             if(err) return  res(err);
-//             if(user) return res.status(200).send({
-//                 isAuth: true,
-//                 id: "You are already logged in"
-//             });
-
-//             else {
-//                 const getUser = await User.find({
-//                     public_key: req.body.public_key.toLowerCase()
-//                 });
-                
-//                 if (getUser.length > 0) {
-                    
-//                     getUser[0].generateToken((err,user)=>{
-//                         if(err) return res.status(400).send(err);
-//                         res.cookie('auth',user.token).json({
-//                             isAuth : true,
-//                             id : user._id,
-//                             public_key : user.public_key,
-//                             token: user.token
-//                         });
-//                     }); 
-        
-//                     // res.send({
-//                     //     user: getUser[0]
-//                     // })
-//                 } else {
-//                     res.status(400).send({
-//                         message: "User With Public Key Not Found"
-//                     })
-//                 }
-//             }
-//         })
-        
-//     } catch (err) {
-//         res.status(400).send({
-//             message: err.message
-//         })
-//     }
-// })
-
-// router.post('/logout',auth,async(req,res) => {
-//     const user = await User.find({public_key: req.public_key})
-//     if(user.length > 0) {
-//         user[0].deleteToken(req.token,(err,user)=>{
-//             if(err) return res.status(400).send(err);
-//             res.sendStatus(200);
-//         });
-//     } else {        
-//         res.status(400).send({
-//             message: "User With Public Key Not Found"
-//         })
-//     }
-// }); 
-
-// router.post('/islogin', async(req,res) => {
-//     let token =req.body.token;
-//     User.findByToken(token,(err,user)=>{
-//         if(err) throw err;
-//         if(!user) return res.send({
-//             status: false
-//         });
-
-//         if(user.public_key != req.body.public_key) return res.send({
-//             status: false
-//         })
-
-//         return res.send({
-//             status: true
-//         })
-//     })
-// }); 
 
 export default router;
